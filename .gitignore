@@ -1,0 +1,16 @@
+## SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+## Built app bundle (produced by scripts/build-app.sh)
+build/
+
+## macOS
+.DS_Store
+
+## Xcode (if anyone opens the package in Xcode)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.xcscmblueprint
