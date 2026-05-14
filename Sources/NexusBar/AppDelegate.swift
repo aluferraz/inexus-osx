@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var prefsController: PreferencesWindowController?
+    private var backgroundController: BackgroundWindowController?
 
     // Device + monitors
     private var device: NexusDevice?
@@ -20,7 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let renderQueue = DispatchQueue(label: "com.nexusbar.render", qos: .userInitiated)
     private var renderTimer: DispatchSourceTimer?
     private var blanked = false
-    private var showingCustomImage = false
+    private var cachedBackground: [UInt8]?
+    private var cachedBackgroundKey: String = ""   // path|mode — invalidates the cache
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -63,6 +65,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    keyEquivalent: ",")
         prefsItem.target = self
         menu.addItem(prefsItem)
+
+        let bgItem = NSMenuItem(title: "Background Image…",
+                                action: #selector(openBackgroundWindow),
+                                keyEquivalent: "i")
+        bgItem.target = self
+        menu.addItem(bgItem)
+
         menu.addItem(.separator())
 
         let blank = NSMenuItem(title: "Blank Screen",
@@ -70,18 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                keyEquivalent: "b")
         blank.target = self
         menu.addItem(blank)
-
-        let image = NSMenuItem(title: "Push Image…",
-                               action: #selector(pushImage),
-                               keyEquivalent: "o")
-        image.target = self
-        menu.addItem(image)
-
-        let restore = NSMenuItem(title: "Restore Live Display",
-                                 action: #selector(restoreLive),
-                                 keyEquivalent: "r")
-        restore.target = self
-        menu.addItem(restore)
 
         menu.addItem(.separator())
 
@@ -125,9 +122,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startRenderLoop() {
         stopRenderLoop()
-        guard !showingCustomImage, !blanked else { return }
+        guard !blanked else { return }
 
-        renderQueue.async { [weak self] in self?.cpu.sample(); self?.memory.sample() }
+        renderQueue.async { [weak self] in
+            self?.cpu.sample()
+            self?.memory.sample()
+            self?.refreshBackgroundCacheIfNeeded()
+        }
 
         let timer = DispatchSource.makeTimerSource(queue: renderQueue)
         let interval = max(0.25, settings.refreshSeconds)
@@ -143,9 +144,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func renderTick() {
-        guard let device, !blanked, !showingCustomImage else { return }
+        guard let device, !blanked else { return }
         cpu.sample()
         memory.sample()
+        refreshBackgroundCacheIfNeeded()
 
         let inputs = RenderInputs(date: Date(),
                                   cpuLoad: cpu.usage,
@@ -158,12 +160,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 inputs: inputs,
                 palette: settings.theme.palette,
                 timeFormat: settings.timeFormat,
-                showSeconds: settings.showSeconds
+                showSeconds: settings.showSeconds,
+                background: cachedBackground,
+                backgroundDim: settings.backgroundDim
             )
             try device.showFrame(frame)
         } catch {
             DispatchQueue.main.async { [weak self] in
                 self?.statusMenuItem.title = "Render error: \(error)"
+            }
+        }
+    }
+
+    /// Reload + rasterize the background image when its path or scale mode
+    /// changes. Runs on `renderQueue` (or `settingsDidChange`).
+    private func refreshBackgroundCacheIfNeeded() {
+        let path = settings.backgroundImagePath ?? ""
+        let mode = settings.backgroundScaleMode.rawValue
+        let key = "\(path)|\(mode)"
+        if key == cachedBackgroundKey { return }
+        cachedBackgroundKey = key
+
+        guard !path.isEmpty else {
+            cachedBackground = nil
+            return
+        }
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        do {
+            cachedBackground = try NexusImage.loadAsFrame(url: url, mode: settings.backgroundScaleMode)
+        } catch {
+            cachedBackground = nil
+            DispatchQueue.main.async { [weak self] in
+                self?.statusMenuItem.title = "Background error: \(error.localizedDescription)"
             }
         }
     }
@@ -208,26 +236,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func pushImage() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .image]
-        panel.allowsMultipleSelection = false
-        panel.message = "Pick a 640×48 image (other sizes will be stretched)."
-        guard panel.runModal() == .OK, let url = panel.url, let device else { return }
-        do {
-            let frame = try NexusImage.loadAsFrame(url: url)
-            showingCustomImage = true
-            stopRenderLoop()
-            renderQueue.async { try? device.showFrame(frame) }
-            statusMenuItem.title = "Showing \(url.lastPathComponent)"
-        } catch {
-            statusMenuItem.title = "Image error: \(error)"
-        }
-    }
-
-    @objc private func restoreLive() {
-        showingCustomImage = false
-        startRenderLoop()
+    @objc private func openBackgroundWindow() {
+        if backgroundController == nil { backgroundController = BackgroundWindowController() }
+        backgroundController?.showAndFront()
     }
 
     @objc private func reconnectDevice() {
@@ -235,7 +246,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         device?.close()
         device = nil
         blanked = false
-        showingCustomImage = false
         statusMenuItem.title = "Reconnecting…"
         connectAndStart()
     }

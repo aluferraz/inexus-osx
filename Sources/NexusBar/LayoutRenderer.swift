@@ -13,17 +13,33 @@ struct RenderInputs {
 
 enum LayoutRenderer {
 
+    /// Render a single frame.
+    /// - Parameters:
+    ///   - background: optional pre-rendered 640×48 RGBA8 frame to use as the
+    ///     backdrop. If supplied, the layout draws on top of it and the theme
+    ///     background colour is ignored. Use `NexusImage.rasterize` to produce.
+    ///   - backgroundDim: 0...100, how much black to mix over the backdrop for
+    ///     text readability. Ignored when `background` is nil.
     static func render(layout: Settings.Layout,
                        inputs: RenderInputs,
                        palette: Palette,
                        timeFormat: Settings.TimeFormat,
-                       showSeconds: Bool) throws -> [UInt8] {
-        try NexusImage.renderToFrame { ctx in
-            // Fill background.
-            ctx.setFillColor(palette.background.cgColor)
-            ctx.fill(CGRect(x: 0, y: 0,
-                            width: NexusProtocol.width,
-                            height: NexusProtocol.height))
+                       showSeconds: Bool,
+                       background: [UInt8]? = nil,
+                       backgroundDim: Int = 0) throws -> [UInt8] {
+        let canvasRect = CGRect(x: 0, y: 0,
+                                width: NexusProtocol.width,
+                                height: NexusProtocol.height)
+
+        return try NexusImage.renderToFrame(background: background) { ctx in
+            if background == nil {
+                ctx.setFillColor(palette.background.cgColor)
+                ctx.fill(canvasRect)
+            } else if backgroundDim > 0 {
+                let alpha = CGFloat(min(100, max(0, backgroundDim))) / 100.0
+                ctx.setFillColor(NSColor(red: 0, green: 0, blue: 0, alpha: alpha).cgColor)
+                ctx.fill(canvasRect)
+            }
 
             let ns = NSGraphicsContext(cgContext: ctx, flipped: true)
             NSGraphicsContext.saveGraphicsState()

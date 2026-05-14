@@ -1,4 +1,5 @@
 import Foundation
+import NexusCore
 
 /// User-configurable settings persisted in UserDefaults. Observers receive
 /// `Settings.changed` notifications whenever any field is mutated.
@@ -54,6 +55,9 @@ final class Settings {
         static let brightness     = "brightness"
         static let refreshSeconds = "refreshSeconds"
         static let launchAtLogin  = "launchAtLogin"
+        static let bgImagePath    = "backgroundImagePath"
+        static let bgScaleMode    = "backgroundScaleMode"
+        static let bgDim          = "backgroundDim"
     }
 
     var layout: Layout {
@@ -89,6 +93,26 @@ final class Settings {
     var launchAtLogin: Bool {
         get { defaults.bool(forKey: Key.launchAtLogin) }
         set { defaults.set(newValue, forKey: Key.launchAtLogin); broadcast() }
+    }
+
+    var backgroundImagePath: String? {
+        get { defaults.string(forKey: Key.bgImagePath) }
+        set {
+            if let v = newValue, !v.isEmpty { defaults.set(v, forKey: Key.bgImagePath) }
+            else { defaults.removeObject(forKey: Key.bgImagePath) }
+            broadcast()
+        }
+    }
+
+    var backgroundScaleMode: NexusImage.ScaleMode {
+        get { defaults.string(forKey: Key.bgScaleMode).flatMap(NexusImage.ScaleMode.init(rawValue:)) ?? .fill }
+        set { defaults.set(newValue.rawValue, forKey: Key.bgScaleMode); broadcast() }
+    }
+
+    /// 0 = no dimming, 100 = fully dimmed to black.
+    var backgroundDim: Int {
+        get { (defaults.object(forKey: Key.bgDim) as? Int) ?? 25 }
+        set { defaults.set(max(0, min(100, newValue)), forKey: Key.bgDim); broadcast() }
     }
 
     private func broadcast() {

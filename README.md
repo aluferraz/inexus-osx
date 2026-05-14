@@ -68,6 +68,19 @@ restore, push a custom image, reconnect, quit.
 
 All settings persist in `UserDefaults` and apply live without restarting.
 
+### Background image (menu → Background Image…, or ⌘I)
+
+Drop any image into the window or click **Choose Image…**. The live clock /
+CPU / memory overlay your image — the image is the *background*, not a
+replacement. Options:
+
+- **Scale** — Stretch, Fit (letterbox), Fill (crop to fill), Center (1:1)
+- **Dim** — 0–100% black overlay so text stays readable on bright images
+- **Live preview** — 2× preview shows exactly what the device renders, with
+  the current time and stats on top
+
+The image path persists across launches. Use **Remove Background** to clear.
+
 ### Touch shortcuts (on the Nexus itself)
 
 - Tap left half → blank / restore
