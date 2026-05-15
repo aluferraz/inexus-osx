@@ -68,6 +68,34 @@ restore, push a custom image, reconnect, quit.
 
 All settings persist in `UserDefaults` and apply live without restarting.
 
+### Pages (menu → Edit Pages…, or ⌘E)
+
+Multiple pages you swipe between on the device. Three are created by default:
+
+- **Status** — the live clock / CPU / memory layout
+- **Apps** — Safari, Mail, Finder, Terminal, Notes, Settings
+- **Media** — Previous, Play/Pause, Next, Volume−, Mute, Volume+
+
+Add / remove / reorder pages in the sidebar. Each grid page holds up to 12
+buttons; click a button card to edit its icon, label, and action. Action types:
+
+- **Launch App** — pick any `.app` from `/Applications`
+- **Open URL** — anything `NSWorkspace` can open
+- **Run macOS Shortcut** — by name, via `/usr/bin/shortcuts run`
+- **Run Script** — file picker + space-separated arguments
+- **Send Keystroke** — Record button captures any key combo (needs
+  Accessibility permission the first time it's actually fired)
+- **Media Key** — Play/Pause, Next, Previous, Volume±, Mute (no permission)
+- **Next Page / Previous Page** — flip the cycle programmatically
+
+Touch controls on the device: tap a button on a grid page fires its action;
+swipe left / right flips pages; the page-dot indicator in the top-right shows
+which page is current.
+
+The 2× live preview at the top of the editor renders the actual frame
+(including the clock on status pages), so what you see is what the device
+shows.
+
 ### Background image (menu → Background Image…, or ⌘I)
 
 Drop any image into the window or click **Choose Image…**. The live clock /
