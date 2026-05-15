@@ -58,6 +58,7 @@ final class Settings {
         static let bgImagePath    = "backgroundImagePath"
         static let bgScaleMode    = "backgroundScaleMode"
         static let bgDim          = "backgroundDim"
+        static let blankOnLock    = "blankOnLock"
     }
 
     var layout: Layout {
@@ -113,6 +114,13 @@ final class Settings {
     var backgroundDim: Int {
         get { (defaults.object(forKey: Key.bgDim) as? Int) ?? 25 }
         set { defaults.set(max(0, min(100, newValue)), forKey: Key.bgDim); broadcast() }
+    }
+
+    /// Automatically blank the Nexus display when the Mac is locked / its
+    /// display sleeps, and restore on unlock / wake. Default on.
+    var blankOnLock: Bool {
+        get { defaults.object(forKey: Key.blankOnLock) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.blankOnLock); broadcast() }
     }
 
     private func broadcast() {

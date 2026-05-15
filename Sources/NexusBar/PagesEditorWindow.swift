@@ -295,11 +295,14 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
 
         // Constraints.
         NSLayoutConstraint.activate([
-            // Preview
+            // Preview — fills the main pane width with 24px margins. The
+            // height follows the 640:48 device aspect ratio so the image is
+            // never distorted regardless of window size.
             previewImageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
-            previewImageView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            previewImageView.widthAnchor.constraint(equalToConstant: 1280),
-            previewImageView.heightAnchor.constraint(equalToConstant: 96),
+            previewImageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            previewImageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
+            previewImageView.heightAnchor.constraint(equalTo: previewImageView.widthAnchor,
+                                                     multiplier: 48.0 / 640.0),
 
             previewCaption.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 4),
             previewCaption.centerXAnchor.constraint(equalTo: container.centerXAnchor),

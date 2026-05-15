@@ -102,6 +102,13 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         refreshLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
         form.addArrangedSubview(makeRow(label: "Refresh rate:", control: refreshRow))
 
+        // Blank on lock
+        let blankOnLockBox = NSButton(checkboxWithTitle:
+            "Blank Nexus when the Mac locks or its display sleeps",
+            target: self, action: #selector(toggleBlankOnLock(_:)))
+        blankOnLockBox.state = settings.blankOnLock ? .on : .off
+        form.addArrangedSubview(makeRow(label: "", control: blankOnLockBox))
+
         // Login at startup
         loginToggle = NSButton(checkboxWithTitle: "Launch Nexus Bar at login",
                                target: self, action: #selector(toggleLogin(_:)))
@@ -185,6 +192,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func toggleSeconds(_ sender: NSButton) {
         settings.showSeconds = (sender.state == .on)
+    }
+
+    @objc private func toggleBlankOnLock(_ sender: NSButton) {
+        settings.blankOnLock = (sender.state == .on)
     }
 
     @objc private func brightnessChanged(_ sender: NSSlider) {

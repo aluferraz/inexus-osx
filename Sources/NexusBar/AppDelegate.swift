@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let renderQueue = DispatchQueue(label: "com.nexusbar.render", qos: .userInitiated)
     private var renderTimer: DispatchSourceTimer?
     private var blanked = false
+    /// True when we blanked the display in response to the Mac locking or
+    /// the screen sleeping — used to auto-restore when it wakes back up
+    /// without overriding a manual blank toggled via menu/touch.
+    private var autoBlankedDueToLock = false
     private var cachedBackground: [UInt8]?
     private var cachedBackgroundKey: String = ""
     private var currentPageIndex: Int = 0
@@ -58,8 +62,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        registerScreenLockObservers()
+
         LoginItem.sync(with: settings.launchAtLogin)
         connectAndStart()
+    }
+
+    // MARK: - Screen lock / sleep
+
+    private func registerScreenLockObservers() {
+        let distributed = DistributedNotificationCenter.default()
+        distributed.addObserver(self, selector: #selector(screenLocked),
+                                name: NSNotification.Name("com.apple.screenIsLocked"),
+                                object: nil)
+        distributed.addObserver(self, selector: #selector(screenUnlocked),
+                                name: NSNotification.Name("com.apple.screenIsUnlocked"),
+                                object: nil)
+
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(self, selector: #selector(screenLocked),
+                              name: NSWorkspace.screensDidSleepNotification, object: nil)
+        workspace.addObserver(self, selector: #selector(screenUnlocked),
+                              name: NSWorkspace.screensDidWakeNotification, object: nil)
+    }
+
+    @objc private func screenLocked() {
+        guard settings.blankOnLock, !blanked, let device else { return }
+        autoBlankedDueToLock = true
+        renderQueue.async { [weak self] in
+            guard let self else { return }
+            self.blanked = true
+            self.stopRenderLoop()
+            // Backlight off AND clear pixels — the blank command on its own
+            // leaves the backlight lit on black; we want the panel fully dark.
+            try? device.setBrightness(0)
+            try? device.blankScreen()
+        }
+    }
+
+    @objc private func screenUnlocked() {
+        guard autoBlankedDueToLock, let device else { return }
+        autoBlankedDueToLock = false
+        renderQueue.async { [weak self] in
+            guard let self else { return }
+            self.blanked = false
+            try? device.setBrightness(self.settings.brightness)
+            DispatchQueue.main.async { self.startRenderLoop() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -299,6 +348,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Observers
 
     @objc private func settingsDidChange() {
+        // Don't override the blank state if we're currently blanked — settings
+        // changes will take effect the next time the panel comes back on.
+        guard !blanked else { return }
         renderQueue.async { [weak self] in
             guard let self, let device = self.device else { return }
             try? device.setBrightness(self.settings.brightness)
@@ -340,6 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     self.blanked = true
                     self.stopRenderLoop()
+                    try device.setBrightness(0)
                     try device.blankScreen()
                 }
             } catch {

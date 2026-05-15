@@ -93,8 +93,13 @@ extension NexusDevice {
 /// NexusTool's interpretation: small displacement = tap, larger = jitter,
 /// > 200 px = swipe.
 public final class NexusGestureRecognizer {
-    public var swipeThreshold = 200
-    public var tapThreshold = 50
+    /// Minimum X displacement (in device pixels, 0...639) to recognise a swipe.
+    /// Originally 200 from NexusTool's Linux CLI, but that's ~31% of the screen
+    /// — too much for one-handed thumb swipes. 80 ≈ 12.5% feels right.
+    public var swipeThreshold = 80
+    /// X displacement above this but below `swipeThreshold` is reported as a
+    /// `.jitter` — a stationary press that drifted slightly.
+    public var tapThreshold = 30
 
     private var firstX: Int?
     private var lastX: Int = -1

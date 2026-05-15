@@ -147,7 +147,7 @@ public final class NexusDevice {
     }
 
     public func scheduleOnRunLoop(_ runLoop: CFRunLoop = CFRunLoopGetCurrent(),
-                                  mode: CFString = CFRunLoopMode.defaultMode.rawValue) {
+                                  mode: CFString = CFRunLoopMode.commonModes.rawValue) {
         IOHIDDeviceScheduleWithRunLoop(device, runLoop, mode)
     }
 
@@ -157,22 +157,27 @@ public final class NexusDevice {
     }
 
     private func handleInputReport(reportID: UInt8, bytes: [UInt8]) {
-        // IOKit hands us the report body *without* the report ID prefix.
-        // For touch (report 0x01): body = [0x02, 0x21, 0x00, 0x00, state, x_lo, x_hi, ...].
+        // On macOS, the input-report callback delivers the buffer *with* the
+        // report ID as byte 0 (hidapi follows the same convention). Touch
+        // report 0x01 layout:
+        //   [0]=0x01 (report ID)  [1]=0x02  [2]=0x21  [3..4]=padding
+        //   [5]=touch active flag (0/1)
+        //   [6]=X low byte         [7]=X high byte
+        // The other 56 bytes are firmware padding that we ignore.
         guard reportID == NexusProtocol.touchReportId,
-              bytes.count >= 7,
-              bytes[0] == 0x02, bytes[1] == 0x21
+              bytes.count >= 8,
+              bytes[0] == 0x01, bytes[1] == 0x02, bytes[2] == 0x21
         else { return }
 
-        let active = bytes[4] != 0
-        let x = Int(bytes[5]) | (Int(bytes[6]) << 8)
+        let active = bytes[5] != 0
+        let x = Int(bytes[6]) | (Int(bytes[7]) << 8)
 
         let phase: NexusTouchEvent.Phase
         switch (lastTouchActive, active) {
         case (false, true): phase = .began
         case (true, true):  phase = .moved
         case (true, false): phase = .ended
-        case (false, false): return // no-op idle report
+        case (false, false): return // idle keep-alive
         }
         lastTouchActive = active
         touchHandler?(NexusTouchEvent(phase: phase, x: x))

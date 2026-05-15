@@ -6,11 +6,45 @@ Package.resolved
 ## Built app bundle (produced by scripts/build-app.sh)
 build/
 
-## macOS
-.DS_Store
-
 ## Xcode (if anyone opens the package in Xcode)
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
 *.xcscmblueprint
+DerivedData/
+
+## Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## Credentials / secrets — defensive; this repo has none today, but never
+## let them sneak in.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.provisionprofile
+secrets/
+
+## Logs
+*.log
+
+## macOS noise
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+Icon
+
+## iCloud sync placeholders
+*.icloud
+
+## Misc temp files we used during debugging
+/tmp/nexusbar.log
