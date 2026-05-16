@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import NexusCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -20,8 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let executor = ActionExecutor()
 
     // Rendering — runs on a dedicated background queue so slow HID writes
-    // never block the menu / status item from staying responsive.
-    private let renderQueue = DispatchQueue(label: "com.nexusbar.render", qos: .userInitiated)
+    // never block the menu / status item from staying responsive. QoS is
+    // `.utility` because this is sustained background work, not a user-driven
+    // action: it lets the macOS scheduler keep us on efficiency cores on
+    // Apple Silicon and back off when the system is busy.
+    private let renderQueue = DispatchQueue(label: "com.nexusbar.render", qos: .utility)
     private var renderTimer: DispatchSourceTimer?
     private var blanked = false
     /// True when we blanked the display in response to the Mac locking or
@@ -145,6 +149,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    keyEquivalent: ",")
         prefsItem.target = self
         menu.addItem(prefsItem)
+
+        menu.addItem(.separator())
+
+        let exportItem = NSMenuItem(title: "Export Backup…",
+                                    action: #selector(exportBackup),
+                                    keyEquivalent: "")
+        exportItem.target = self
+        menu.addItem(exportItem)
+
+        let importItem = NSMenuItem(title: "Import Backup…",
+                                    action: #selector(importBackup),
+                                    keyEquivalent: "")
+        importItem.target = self
+        menu.addItem(importItem)
 
         menu.addItem(.separator())
 
@@ -426,6 +444,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         blanked = false
         statusMenuItem.title = "Reconnecting…"
         connectAndStart()
+    }
+
+    // MARK: - Backup
+
+    @objc private func exportBackup() {
+        let panel = NSSavePanel()
+        panel.title = "Export Nexus Bar Backup"
+        panel.message = "Pages, settings, and all referenced icon / background files."
+        let stamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        panel.nameFieldStringValue = "NexusBar-\(stamp).nexusbar"
+        panel.allowsOtherFileTypes = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try BackupManager.export(to: url)
+            let ok = NSAlert()
+            ok.alertStyle = .informational
+            ok.messageText = "Backup saved"
+            ok.informativeText = "Wrote \(url.lastPathComponent)."
+            ok.runModal()
+        } catch {
+            presentBackupError("Couldn't export backup", error: error)
+        }
+    }
+
+    @objc private func importBackup() {
+        let open = NSOpenPanel()
+        open.title = "Import Nexus Bar Backup"
+        open.allowsMultipleSelection = false
+        open.canChooseFiles = true
+        open.canChooseDirectories = false
+        // `.nexusbar` has no system-registered UTType, so synthesise one from
+        // the extension and pair it with `.zip` for users who renamed back.
+        var allowed: [UTType] = [.zip]
+        if let custom = UTType(filenameExtension: "nexusbar") { allowed.insert(custom, at: 0) }
+        open.allowedContentTypes = allowed
+        guard open.runModal() == .OK, let url = open.url else { return }
+
+        let confirm = NSAlert()
+        confirm.alertStyle = .warning
+        confirm.messageText = "Replace current pages and settings?"
+        confirm.informativeText =
+            "Importing this backup will overwrite every page and most preferences. " +
+            "Your existing icon / background files stay on disk, but page references switch over. " +
+            "Consider exporting your current setup first if you want to keep it."
+        confirm.addButton(withTitle: "Import")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try BackupManager.importFrom(url)
+            // settingsDidChange / pagesDidChange notifications drive the render
+            // loop to redraw; no manual nudge needed.
+            let ok = NSAlert()
+            ok.messageText = "Backup imported"
+            ok.informativeText = "Pages and settings restored from \(url.lastPathComponent)."
+            ok.runModal()
+        } catch {
+            presentBackupError("Couldn't import backup", error: error)
+        }
+    }
+
+    private func presentBackupError(_ title: String, error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     // MARK: - Touch

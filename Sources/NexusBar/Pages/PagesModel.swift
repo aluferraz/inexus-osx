@@ -95,6 +95,7 @@ enum ElementKind: Codable, Equatable {
 /// The live-data widgets available in a free-layout page.
 enum WidgetKind: String, Codable, CaseIterable {
     case clock         // current time per Preferences format
+    case clockHHMM     // always HH:mm regardless of the Preferences "show seconds" toggle
     case dateLong      // "Friday 16 May"
     case dateShort     // "FRI 16 MAY"
     case cpuPercent    // "47%"
@@ -106,6 +107,7 @@ enum WidgetKind: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .clock:       return "Clock"
+        case .clockHHMM:   return "Clock (no seconds)"
         case .dateLong:    return "Date (long)"
         case .dateShort:   return "Date (short)"
         case .cpuPercent:  return "CPU %"
@@ -120,6 +122,7 @@ enum WidgetKind: String, Codable, CaseIterable {
     var defaultRect: PageRect {
         switch self {
         case .clock:       return PageRect(x: 12,  y: 6,  width: 160, height: 36)
+        case .clockHHMM:   return PageRect(x: 12,  y: 6,  width: 120, height: 36)
         case .dateLong:    return PageRect(x: 12,  y: 28, width: 200, height: 16)
         case .dateShort:   return PageRect(x: 12,  y: 28, width: 110, height: 16)
         case .cpuPercent:  return PageRect(x: 280, y: 14, width: 64,  height: 22)

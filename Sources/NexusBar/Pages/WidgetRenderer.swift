@@ -16,6 +16,9 @@ enum WidgetRenderer {
         case .clock:
             drawFittedText(timeString(inputs.date, timeFormat, seconds: showSeconds),
                            in: rect, palette: palette, monospaced: true)
+        case .clockHHMM:
+            drawFittedText(timeString(inputs.date, timeFormat, seconds: false),
+                           in: rect, palette: palette, monospaced: true)
         case .dateLong:
             drawFittedText(longDate(inputs.date), in: rect, palette: palette)
         case .dateShort:
