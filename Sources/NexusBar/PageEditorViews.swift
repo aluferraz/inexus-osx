@@ -191,6 +191,24 @@ final class ButtonCardView: NSView {
             if let img = NSImage(contentsOfFile: expanded) {
                 img.draw(in: aspectFit(size: img.size, in: rect))
             }
+        case .animatedFile(let path):
+            // Show a stale poster frame in the editor card — it doesn't
+            // animate, but it tells you what's loaded.
+            if let icon = AnimatedIconCache.shared.load(path: path),
+               let cg = icon.frame(at: 0) {
+                let img = NSImage(cgImage: cg,
+                                  size: NSSize(width: cg.width, height: cg.height))
+                img.draw(in: aspectFit(size: img.size, in: rect))
+            } else {
+                let cfg = NSImage.SymbolConfiguration(pointSize: rect.height * 0.55,
+                                                     weight: .regular)
+                    .applying(NSImage.SymbolConfiguration(hierarchicalColor:
+                                                          NSColor.tertiaryLabelColor))
+                let icon = NSImage(systemSymbolName: "play.rectangle.on.rectangle",
+                                   accessibilityDescription: nil)?
+                    .withSymbolConfiguration(cfg)
+                icon?.draw(in: aspectFit(size: icon?.size ?? rect.size, in: rect))
+            }
         case .textOnly:
             break
         }
@@ -362,11 +380,24 @@ final class ButtonInspectorView: NSView {
         switch button.icon {
         case .sfSymbol(let name):
             iconValueField.stringValue = name
+            iconValueField.placeholderString = "e.g. globe, music.note.house, etc."
             iconValueField.isHidden = false
+            iconChooseFileButton.title = "Choose Image…"
+            iconChooseFileButton.action = #selector(chooseIconFile)
             iconChooseFileButton.isHidden = true
         case .imageFile(let path):
             iconValueField.stringValue = path
+            iconValueField.placeholderString = "/path/to/icon.png"
             iconValueField.isHidden = false
+            iconChooseFileButton.title = "Choose Image…"
+            iconChooseFileButton.action = #selector(chooseIconFile)
+            iconChooseFileButton.isHidden = false
+        case .animatedFile(let path):
+            iconValueField.stringValue = path
+            iconValueField.placeholderString = "/path/to/clip.gif or .mp4"
+            iconValueField.isHidden = false
+            iconChooseFileButton.title = "Choose Clip…"
+            iconChooseFileButton.action = #selector(chooseAnimatedFile)
             iconChooseFileButton.isHidden = false
         case .textOnly:
             iconValueField.stringValue = ""
@@ -389,9 +420,10 @@ final class ButtonInspectorView: NSView {
               let kind = iconKindPopup.selectedItem?.representedObject as? ButtonIcon.Kind else { return }
         if b.icon.kind == kind { return }
         switch kind {
-        case .sfSymbol: b.icon = .sfSymbol(name: "star")
-        case .imageFile: b.icon = .imageFile(path: "")
-        case .textOnly: b.icon = .textOnly
+        case .sfSymbol:     b.icon = .sfSymbol(name: "star")
+        case .imageFile:    b.icon = .imageFile(path: "")
+        case .animatedFile: b.icon = .animatedFile(path: "")
+        case .textOnly:     b.icon = .textOnly
         }
         button = b
         onChange?(b)
@@ -405,18 +437,65 @@ final class ButtonInspectorView: NSView {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard var b = button else { return }
-        b.icon = .imageFile(path: url.path)
+        let stable = ResourceStore.adopt(url)
+        b.icon = .imageFile(path: stable)
         button = b
         onChange?(b)
+    }
+
+    @objc private func chooseAnimatedFile() {
+        let panel = NSOpenPanel()
+        if #available(macOS 11.0, *) {
+            // GIF / APNG via .image; MP4 / MOV via UTType.movie. WebM (no
+            // native macOS UTType) is picked through `.data` and auto-converted
+            // by ClipImporter via ffmpeg.
+            panel.allowedContentTypes = [.gif, .png, .image,
+                                         .movie, .video, .quickTimeMovie, .mpeg4Movie,
+                                         .data]
+        }
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard var b = button else { return }
+
+        switch ClipImporter.adopt(url) {
+        case .success(let stable):
+            AnimatedIconCache.shared.invalidate(path: stable)
+            b.icon = .animatedFile(path: stable)
+            button = b
+            onChange?(b)
+        case .failure(let err):
+            presentClipImportError(err, sourceURL: url)
+        }
+    }
+
+    private func presentClipImportError(_ err: ClipImporter.ImportError, sourceURL: URL) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        switch err {
+        case .webmNeedsFfmpeg:
+            alert.messageText = "WebM clips need ffmpeg"
+            alert.informativeText =
+                "macOS can't decode WebM natively. Install ffmpeg with Homebrew:\n\n" +
+                "    brew install ffmpeg\n\n" +
+                "Then pick the clip again — Nexus Bar will auto-transcode it to MP4."
+        case .ffmpegFailed(let stderr):
+            alert.messageText = "Couldn't transcode the clip"
+            alert.informativeText = "ffmpeg failed for \(sourceURL.lastPathComponent):\n\n\(stderr)"
+        case .copyFailed(let underlying):
+            alert.messageText = "Couldn't import the clip"
+            alert.informativeText = underlying.localizedDescription
+        }
+        alert.runModal()
     }
 
     fileprivate func iconValueCommitted() {
         guard var b = button else { return }
         let v = iconValueField.stringValue
         switch b.icon {
-        case .sfSymbol:   b.icon = .sfSymbol(name: v)
-        case .imageFile:  b.icon = .imageFile(path: v)
-        case .textOnly:   break
+        case .sfSymbol:      b.icon = .sfSymbol(name: v)
+        case .imageFile:     b.icon = .imageFile(path: v)
+        case .animatedFile:  b.icon = .animatedFile(path: v)
+        case .textOnly:      break
         }
         button = b
         onChange?(b)
@@ -442,6 +521,15 @@ final class ButtonInspectorView: NSView {
         case .imageFile(let path):
             let expanded = (path as NSString).expandingTildeInPath
             iconPreview.image = NSImage(contentsOfFile: expanded)
+        case .animatedFile(let path):
+            if let icon = AnimatedIconCache.shared.load(path: path),
+               let cg = icon.frame(at: 0) {
+                iconPreview.image = NSImage(cgImage: cg,
+                                            size: NSSize(width: cg.width, height: cg.height))
+            } else {
+                iconPreview.image = NSImage(systemSymbolName: "play.rectangle.on.rectangle",
+                                            accessibilityDescription: nil)
+            }
         case .textOnly:
             iconPreview.image = nil
         }
@@ -686,7 +774,239 @@ final class ButtonInspectorView: NSView {
     }
 }
 
-// MARK: - NSTextFieldDelegate for inspector fields
+// MARK: - Free-layout element inspector
+
+/// Inspector for a `PageElement` (either a widget or a button placed on a
+/// free-layout page). Shows the element's frame as four integer fields plus
+/// kind-specific controls — for widgets, a kind popup; for buttons, the same
+/// `ButtonInspectorView` used in button-grid pages.
+final class FreeElementInspectorView: NSView {
+
+    var onElementChanged: ((PageElement) -> Void)?
+    var onDeleteRequested: (() -> Void)?
+
+    var element: PageElement? {
+        didSet {
+            if oldValue == element { return }   // ignore no-op re-sets so typing isn't interrupted
+            rebuild()
+        }
+    }
+
+    // Frame inputs (logical pixel coordinates on the 640×48 canvas).
+    private var xField, yField, wField, hField: NSTextField!
+
+    // Kind banner / actions
+    private var kindLabel: NSTextField!
+    private var deleteButton: NSButton!
+
+    // Widget-mode controls
+    private var widgetKindPopup: NSPopUpButton!
+    private var widgetSection: NSStackView!
+
+    // Button-mode controls (delegates to ButtonInspectorView)
+    private var buttonInspector: ButtonInspectorView!
+    private var buttonSection: NSStackView!
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        buildForm()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func buildForm() {
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.alignment = .leading
+        root.spacing = 14
+        root.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 20, right: 0)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(root)
+        NSLayoutConstraint.activate([
+            root.topAnchor.constraint(equalTo: topAnchor),
+            root.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            root.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            root.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+        ])
+
+        // Header: element kind + delete button
+        kindLabel = NSTextField(labelWithString: "")
+        kindLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        deleteButton = NSButton(title: "Delete Element",
+                                target: self, action: #selector(deleteTapped))
+        deleteButton.bezelStyle = .rounded
+        let header = NSStackView(views: [kindLabel, NSView(), deleteButton])
+        header.orientation = .horizontal
+        header.spacing = 10
+        header.alignment = .firstBaseline
+        header.widthAnchor.constraint(equalToConstant: 620).isActive = true
+        root.addArrangedSubview(header)
+
+        // Frame row
+        xField = makeIntField("X", id: "free.x")
+        yField = makeIntField("Y", id: "free.y")
+        wField = makeIntField("W", id: "free.w")
+        hField = makeIntField("H", id: "free.h")
+        let frameRow = NSStackView(views: [
+            captioned("Frame:", row(label: "X", field: xField)),
+            row(label: "Y", field: yField),
+            row(label: "W", field: wField),
+            row(label: "H", field: hField),
+        ])
+        frameRow.orientation = .horizontal
+        frameRow.spacing = 12
+        frameRow.alignment = .firstBaseline
+        root.addArrangedSubview(frameRow)
+
+        let hint = NSTextField(labelWithString:
+            "Canvas is 640 × 48. Drag the element on the preview above or fine-tune here. " +
+            "Arrow keys nudge by 1 px (⇧+arrow = 8 px). Backspace deletes.")
+        hint.font = NSFont.systemFont(ofSize: 11)
+        hint.textColor = .tertiaryLabelColor
+        hint.lineBreakMode = .byWordWrapping
+        hint.maximumNumberOfLines = 0
+        hint.preferredMaxLayoutWidth = 600
+        root.addArrangedSubview(hint)
+
+        // Widget section
+        widgetKindPopup = NSPopUpButton()
+        for k in WidgetKind.allCases {
+            widgetKindPopup.addItem(withTitle: k.displayName)
+            widgetKindPopup.lastItem?.representedObject = k
+        }
+        widgetKindPopup.target = self
+        widgetKindPopup.action = #selector(widgetKindChanged)
+        widgetKindPopup.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+        let widgetRow = NSStackView(views: [
+            NSTextField(labelWithString: "Widget:"), widgetKindPopup,
+        ])
+        widgetRow.orientation = .horizontal
+        widgetRow.spacing = 10
+        widgetRow.alignment = .firstBaseline
+
+        widgetSection = NSStackView(views: [widgetRow])
+        widgetSection.orientation = .vertical
+        widgetSection.alignment = .leading
+        widgetSection.spacing = 10
+        root.addArrangedSubview(widgetSection)
+
+        // Button section
+        buttonInspector = ButtonInspectorView()
+        buttonInspector.onChange = { [weak self] btn in
+            guard let self, var el = self.element, case .button = el.kind else { return }
+            el.kind = .button(btn)
+            self.element = el            // refresh fields (won't rebuild much since kind matches)
+            self.onElementChanged?(el)
+        }
+        buttonInspector.translatesAutoresizingMaskIntoConstraints = false
+
+        buttonSection = NSStackView(views: [buttonInspector])
+        buttonSection.orientation = .vertical
+        buttonSection.alignment = .leading
+        buttonSection.spacing = 0
+        root.addArrangedSubview(buttonSection)
+    }
+
+    private func makeIntField(_ placeholder: String, id: String) -> NSTextField {
+        let f = NSTextField()
+        f.placeholderString = placeholder
+        f.alignment = .right
+        f.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        f.identifier = NSUserInterfaceItemIdentifier(id)
+        f.delegate = self
+        return f
+    }
+
+    private func row(label: String, field: NSTextField) -> NSView {
+        let l = NSTextField(labelWithString: label)
+        l.alignment = .right
+        l.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        let s = NSStackView(views: [l, field])
+        s.orientation = .horizontal
+        s.spacing = 4
+        s.alignment = .firstBaseline
+        return s
+    }
+
+    private func captioned(_ caption: String, _ control: NSView) -> NSView {
+        let lbl = NSTextField(labelWithString: caption)
+        lbl.alignment = .right
+        lbl.widthAnchor.constraint(equalToConstant: 55).isActive = true
+        let stack = NSStackView(views: [lbl, control])
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        stack.alignment = .firstBaseline
+        return stack
+    }
+
+    private func rebuild() {
+        guard let element else { return }
+
+        let r = element.frame
+        xField.stringValue = String(Int(r.x))
+        yField.stringValue = String(Int(r.y))
+        wField.stringValue = String(Int(r.width))
+        hField.stringValue = String(Int(r.height))
+
+        switch element.kind {
+        case .widget(let kind):
+            kindLabel.stringValue = "Widget — \(kind.displayName)"
+            widgetSection.isHidden = false
+            buttonSection.isHidden = true
+            if let idx = WidgetKind.allCases.firstIndex(of: kind) {
+                widgetKindPopup.selectItem(at: idx)
+            }
+        case .button(let btn):
+            kindLabel.stringValue = "Button"
+            widgetSection.isHidden = true
+            buttonSection.isHidden = false
+            buttonInspector.button = btn
+        }
+    }
+
+    @objc private func widgetKindChanged() {
+        guard var el = element,
+              let kind = widgetKindPopup.selectedItem?.representedObject as? WidgetKind,
+              case .widget = el.kind else { return }
+        el.kind = .widget(kind)
+        element = el
+        onElementChanged?(el)
+    }
+
+    @objc private func deleteTapped() {
+        onDeleteRequested?()
+    }
+}
+
+extension FreeElementInspectorView: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField,
+              var el = element else { return }
+        let v = CGFloat(Int(field.stringValue) ?? 0)
+        var r = el.frame
+        switch field.identifier?.rawValue {
+        case "free.x": r.x = v
+        case "free.y": r.y = v
+        case "free.w": r.width = v
+        case "free.h": r.height = v
+        default: return
+        }
+        // Soft clamp so out-of-bounds typing still produces a valid element.
+        let cw = CGFloat(NexusProtocol.width)
+        let ch = CGFloat(NexusProtocol.height)
+        r.width  = max(6, min(cw, r.width))
+        r.height = max(6, min(ch, r.height))
+        r.x      = max(0, min(cw - r.width,  r.x))
+        r.y      = max(0, min(ch - r.height, r.y))
+        el.frame = r
+        element = el                     // re-displays the clamped values
+        onElementChanged?(el)
+    }
+}
+
+// MARK: - NSTextFieldDelegate for ButtonInspectorView fields
 
 extension ButtonInspectorView: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {

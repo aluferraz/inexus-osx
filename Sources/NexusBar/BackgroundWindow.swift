@@ -230,7 +230,9 @@ final class BackgroundWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func applyImage(at url: URL) {
-        settings.backgroundImagePath = url.path
+        // Copy into Application Support so the image keeps working if the
+        // source file is later moved or deleted.
+        settings.backgroundImagePath = ResourceStore.adopt(url)
         applyStateFromSettings()
         refreshPreview()
     }

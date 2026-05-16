@@ -107,6 +107,19 @@ final class PagesStore {
                        action: .mediaKey(kind: .volumeUp)),
         ])
 
-        return [status, apps, media]
+        let combo = Page(name: "Combo", kind: .freeLayout, elements: [
+            PageElement(frame: PageRect(x: 12, y: 4, width: 200, height: 40),
+                        kind: .widget(.clock)),
+            PageElement(frame: PageRect(x: 230, y: 8, width: 70, height: 18),
+                        kind: .widget(.cpuPercent)),
+            PageElement(frame: PageRect(x: 230, y: 32, width: 150, height: 8),
+                        kind: .widget(.cpuBar)),
+            PageElement(frame: PageRect(x: 410, y: 8, width: 70, height: 18),
+                        kind: .widget(.ramPercent)),
+            PageElement(frame: PageRect(x: 410, y: 32, width: 150, height: 8),
+                        kind: .widget(.ramBar)),
+        ])
+
+        return [status, apps, media, combo]
     }
 }

@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedBackgroundKey: String = ""
     private var currentPageIndex: Int = 0
     private var pressedButtonIndex: Int?
+    private var pressedElementId: UUID?
     private var pressFlashUntil: Date = .distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -223,8 +224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshBackgroundCacheIfNeeded()
 
         // Clear the press highlight after a short flash.
-        if pressedButtonIndex != nil, Date() > pressFlashUntil {
+        if Date() > pressFlashUntil {
             pressedButtonIndex = nil
+            pressedElementId = nil
         }
 
         let pages = pagesStore.pages
@@ -236,16 +238,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pageIndex = clampedPageIndex
         let page = pages[pageIndex]
         let palette = settings.theme.palette
+        let inputs = RenderInputs(date: Date(),
+                                  cpuLoad: cpu.usage,
+                                  memUsage: memory.usage,
+                                  memUsedGB: memory.usedGB,
+                                  memTotalGB: memory.totalGB)
+        let animTime = Date().timeIntervalSinceReferenceDate
 
         do {
             let frame: [UInt8]
             switch page.kind {
             case .status:
-                let inputs = RenderInputs(date: Date(),
-                                          cpuLoad: cpu.usage,
-                                          memUsage: memory.usage,
-                                          memUsedGB: memory.usedGB,
-                                          memTotalGB: memory.totalGB)
                 let statusFrame = try LayoutRenderer.render(
                     layout: settings.layout,
                     inputs: inputs,
@@ -269,7 +272,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     backgroundDim: settings.backgroundDim,
                     pressedIndex: pressedButtonIndex,
                     pageIndex: pageIndex,
-                    pageCount: pages.count
+                    pageCount: pages.count,
+                    animationTime: animTime
+                )
+            case .freeLayout:
+                frame = try PageRenderer.renderFreeLayout(
+                    page: page,
+                    palette: palette,
+                    inputs: inputs,
+                    timeFormat: settings.timeFormat,
+                    showSeconds: settings.showSeconds,
+                    background: cachedBackground,
+                    backgroundDim: settings.backgroundDim,
+                    pressedElementId: pressedElementId,
+                    pageIndex: pageIndex,
+                    pageCount: pages.count,
+                    animationTime: animTime
                 )
             }
             try device.showFrame(frame)
@@ -451,6 +469,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pressFlashUntil = Date().addingTimeInterval(0.25)
             renderQueue.async { [weak self] in self?.renderTick() }
             executor.execute(page.buttons[idx].action)
+        case .freeLayout:
+            // The touch device only reports X, so hit-test against element x-range.
+            // Search in reverse so later (visually on-top) elements win.
+            for element in page.elements.reversed() {
+                let r = element.frame.cgRect
+                guard CGFloat(x) >= r.minX, CGFloat(x) <= r.maxX else { continue }
+                if case .button(let btn) = element.kind {
+                    pressedElementId = element.id
+                    pressFlashUntil = Date().addingTimeInterval(0.25)
+                    renderQueue.async { [weak self] in self?.renderTick() }
+                    executor.execute(btn.action)
+                    return
+                }
+            }
         }
     }
 }

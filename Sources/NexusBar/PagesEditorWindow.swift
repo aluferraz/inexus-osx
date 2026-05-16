@@ -27,19 +27,28 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
     private var selectedButtonId: UUID? {
         didSet { onSelectionChanged() }
     }
+    private var selectedElementId: UUID? {
+        didSet { onSelectionChanged() }
+    }
 
     // MARK: Views
 
     private var sidebarTable: NSTableView!
     private var sidebarScroll: NSScrollView!
     private var previewImageView: NSImageView!
+    private var freeCanvas: FreeLayoutCanvasView!
     private var pageNameField: NSTextField!
     private var pageKindPopup: NSPopUpButton!
     private var pageHeaderHost: NSStackView!
     private var buttonStrip: NSStackView!
+    private var stripLabel: NSTextField!
+    private var freeToolbar: NSStackView!
+    private var freeAddWidgetPopup: NSPopUpButton!
     private var inspector: ButtonInspectorView!
+    private var freeInspector: FreeElementInspectorView!
     private var emptyStateLabel: NSTextField!
     private var inspectorScroll: NSScrollView!
+    private var inspectorContainer: NSView!
 
     // Live preview timer (so the clock updates in the status preview).
     private var previewTimer: Timer?
@@ -198,7 +207,9 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
     private func buildMainPane() -> NSView {
         let container = NSView()
 
-        // Preview at top.
+        // Preview at top — either the non-interactive image (status / button
+        // grid pages) or the interactive free-layout canvas, both pinned to
+        // the same constraints.
         previewImageView = NSImageView()
         previewImageView.imageScaling = .scaleProportionallyUpOrDown
         previewImageView.wantsLayer = true
@@ -209,7 +220,19 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
         previewImageView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(previewImageView)
 
-        let previewCaption = NSTextField(labelWithString: "Live preview · drag screen, click a button card to edit")
+        freeCanvas = FreeLayoutCanvasView()
+        freeCanvas.translatesAutoresizingMaskIntoConstraints = false
+        freeCanvas.isHidden = true
+        freeCanvas.onPageChanged = { [weak self] updated in
+            self?.applyFreeCanvasPageEdit(updated)
+        }
+        freeCanvas.onSelectionChanged = { [weak self] id in
+            self?.selectedElementId = id
+        }
+        container.addSubview(freeCanvas)
+
+        let previewCaption = NSTextField(labelWithString:
+            "Live preview · click a button card to edit, drag elements directly on free-layout pages")
         previewCaption.font = NSFont.systemFont(ofSize: 11)
         previewCaption.textColor = .secondaryLabelColor
         previewCaption.translatesAutoresizingMaskIntoConstraints = false
@@ -241,12 +264,13 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
         pageHeaderHost.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(pageHeaderHost)
 
-        // Buttons strip — horizontal scroll-friendly stack.
+        // Buttons strip / free-layout toolbar — share a container, both pinned
+        // to the same slot.
         let stripContainer = NSView()
         stripContainer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stripContainer)
 
-        let stripLabel = NSTextField(labelWithString: "Buttons")
+        stripLabel = NSTextField(labelWithString: "Buttons")
         stripLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         stripLabel.textColor = .secondaryLabelColor
         stripLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -266,8 +290,39 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
         stripScroll.translatesAutoresizingMaskIntoConstraints = false
         stripContainer.addSubview(stripScroll)
 
+        // Free-layout toolbar: Add Widget ▾ / Add Button.
+        freeAddWidgetPopup = NSPopUpButton()
+        freeAddWidgetPopup.addItem(withTitle: "Add Widget…")
+        freeAddWidgetPopup.menu?.addItem(.separator())
+        for k in WidgetKind.allCases {
+            let item = NSMenuItem(title: k.displayName,
+                                  action: #selector(addWidgetMenu(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = k
+            freeAddWidgetPopup.menu?.addItem(item)
+        }
+        freeAddWidgetPopup.widthAnchor.constraint(equalToConstant: 200).isActive = true
+
+        let addButtonBtn = NSButton(title: "Add Button",
+                                    target: self, action: #selector(addFreeButton))
+        addButtonBtn.bezelStyle = .rounded
+
+        let freeHint = NSTextField(labelWithString:
+            "Drop a widget or button anywhere on the canvas above. Drag corners to resize.")
+        freeHint.font = NSFont.systemFont(ofSize: 11)
+        freeHint.textColor = .tertiaryLabelColor
+
+        freeToolbar = NSStackView(views: [freeAddWidgetPopup, addButtonBtn, freeHint])
+        freeToolbar.orientation = .horizontal
+        freeToolbar.spacing = 10
+        freeToolbar.alignment = .centerY
+        freeToolbar.translatesAutoresizingMaskIntoConstraints = false
+        freeToolbar.isHidden = true
+        stripContainer.addSubview(freeToolbar)
+
         // Inspector below the strip.
-        let inspectorTitle = NSTextField(labelWithString: "Selected Button")
+        let inspectorTitle = NSTextField(labelWithString: "Selected Element")
         inspectorTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         inspectorTitle.textColor = .secondaryLabelColor
         inspectorTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -279,15 +334,29 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
         }
         inspector.translatesAutoresizingMaskIntoConstraints = false
 
+        freeInspector = FreeElementInspectorView()
+        freeInspector.onElementChanged = { [weak self] el in
+            self?.applyFreeElementEdit(el)
+        }
+        freeInspector.onDeleteRequested = { [weak self] in
+            self?.deleteSelectedElement()
+        }
+        freeInspector.translatesAutoresizingMaskIntoConstraints = false
+
+        inspectorContainer = NSView()
+        inspectorContainer.translatesAutoresizingMaskIntoConstraints = false
+        inspectorContainer.addSubview(inspector)
+        inspectorContainer.addSubview(freeInspector)
+
         inspectorScroll = NSScrollView()
         inspectorScroll.hasVerticalScroller = true
         inspectorScroll.drawsBackground = false
         inspectorScroll.borderType = .noBorder
-        inspectorScroll.documentView = inspector
+        inspectorScroll.documentView = inspectorContainer
         inspectorScroll.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(inspectorScroll)
 
-        emptyStateLabel = NSTextField(labelWithString: "Select or add a button to edit it.")
+        emptyStateLabel = NSTextField(labelWithString: "Select or add an element to edit it.")
         emptyStateLabel.textColor = .tertiaryLabelColor
         emptyStateLabel.font = NSFont.systemFont(ofSize: 12)
         emptyStateLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -304,6 +373,12 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
             previewImageView.heightAnchor.constraint(equalTo: previewImageView.widthAnchor,
                                                      multiplier: 48.0 / 640.0),
 
+            // Free-layout canvas — exactly the same slot.
+            freeCanvas.topAnchor.constraint(equalTo: previewImageView.topAnchor),
+            freeCanvas.leadingAnchor.constraint(equalTo: previewImageView.leadingAnchor),
+            freeCanvas.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor),
+            freeCanvas.bottomAnchor.constraint(equalTo: previewImageView.bottomAnchor),
+
             previewCaption.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 4),
             previewCaption.centerXAnchor.constraint(equalTo: container.centerXAnchor),
 
@@ -311,7 +386,7 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
             pageHeaderHost.topAnchor.constraint(equalTo: previewCaption.bottomAnchor, constant: 22),
             pageHeaderHost.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
 
-            // Button strip
+            // Button strip / free-layout toolbar slot
             stripContainer.topAnchor.constraint(equalTo: pageHeaderHost.bottomAnchor, constant: 18),
             stripContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             stripContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
@@ -327,6 +402,10 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
 
             buttonStrip.heightAnchor.constraint(equalToConstant: 100),
 
+            freeToolbar.topAnchor.constraint(equalTo: stripLabel.bottomAnchor, constant: 10),
+            freeToolbar.leadingAnchor.constraint(equalTo: stripContainer.leadingAnchor),
+            freeToolbar.trailingAnchor.constraint(lessThanOrEqualTo: stripContainer.trailingAnchor),
+
             // Inspector
             inspectorTitle.topAnchor.constraint(equalTo: stripContainer.bottomAnchor, constant: 16),
             inspectorTitle.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
@@ -336,9 +415,23 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
             inspectorScroll.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
             inspectorScroll.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -18),
 
-            inspector.leadingAnchor.constraint(equalTo: inspectorScroll.contentView.leadingAnchor),
-            inspector.topAnchor.constraint(equalTo: inspectorScroll.contentView.topAnchor),
-            inspector.widthAnchor.constraint(equalTo: inspectorScroll.widthAnchor, constant: -2),
+            // Container holds either inspector or freeInspector; both pinned
+            // to its top/leading/width. The container's height is whichever
+            // visible child is tall enough — taking the max keeps scrolling
+            // honest.
+            inspectorContainer.leadingAnchor.constraint(equalTo: inspectorScroll.contentView.leadingAnchor),
+            inspectorContainer.topAnchor.constraint(equalTo: inspectorScroll.contentView.topAnchor),
+            inspectorContainer.widthAnchor.constraint(equalTo: inspectorScroll.widthAnchor, constant: -2),
+
+            inspector.leadingAnchor.constraint(equalTo: inspectorContainer.leadingAnchor),
+            inspector.topAnchor.constraint(equalTo: inspectorContainer.topAnchor),
+            inspector.trailingAnchor.constraint(equalTo: inspectorContainer.trailingAnchor),
+            inspector.bottomAnchor.constraint(lessThanOrEqualTo: inspectorContainer.bottomAnchor),
+
+            freeInspector.leadingAnchor.constraint(equalTo: inspectorContainer.leadingAnchor),
+            freeInspector.topAnchor.constraint(equalTo: inspectorContainer.topAnchor),
+            freeInspector.trailingAnchor.constraint(equalTo: inspectorContainer.trailingAnchor),
+            freeInspector.bottomAnchor.constraint(lessThanOrEqualTo: inspectorContainer.bottomAnchor),
 
             emptyStateLabel.centerXAnchor.constraint(equalTo: inspectorScroll.centerXAnchor),
             emptyStateLabel.centerYAnchor.constraint(equalTo: inspectorScroll.centerYAnchor),
@@ -372,8 +465,13 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
             pageNameField.stringValue = ""
             pageKindPopup.selectItem(at: 0)
             pageHeaderHost.isHidden = true
+            previewImageView.isHidden = false
+            freeCanvas.isHidden = true
+            stripLabel.isHidden = true
             buttonStrip.isHidden = true
+            freeToolbar.isHidden = true
             inspector.isHidden = true
+            freeInspector.isHidden = true
             emptyStateLabel.isHidden = true
             return
         }
@@ -383,25 +481,67 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
             pageKindPopup.selectItem(at: idx)
         }
 
-        rebuildButtonStrip()
-
-        if page.kind == .buttonGrid, let btn = selectedButton {
-            inspector.isHidden = false
-            emptyStateLabel.isHidden = true
-            inspector.button = btn
-        } else if page.kind == .status {
+        switch page.kind {
+        case .status:
+            previewImageView.isHidden = false
+            freeCanvas.isHidden = true
+            stripLabel.stringValue = "Buttons"
+            stripLabel.isHidden = true
+            buttonStrip.isHidden = true
+            freeToolbar.isHidden = true
             inspector.isHidden = true
+            freeInspector.isHidden = true
             emptyStateLabel.isHidden = false
             emptyStateLabel.stringValue =
                 "Status pages use the layout / theme / time options in Preferences."
-        } else {
-            // grid page but nothing selected
+            rebuildButtonStrip()
+
+        case .buttonGrid:
+            previewImageView.isHidden = false
+            freeCanvas.isHidden = true
+            stripLabel.stringValue = "Buttons"
+            stripLabel.isHidden = false
+            buttonStrip.isHidden = false
+            freeToolbar.isHidden = true
+            freeInspector.isHidden = true
+            rebuildButtonStrip()
+            if let btn = selectedButton {
+                inspector.isHidden = false
+                emptyStateLabel.isHidden = true
+                inspector.button = btn
+            } else {
+                inspector.isHidden = true
+                emptyStateLabel.isHidden = false
+                emptyStateLabel.stringValue = "Select or add a button to edit it."
+            }
+
+        case .freeLayout:
+            previewImageView.isHidden = true
+            freeCanvas.isHidden = false
+            stripLabel.stringValue = "Add Elements"
+            stripLabel.isHidden = false
+            buttonStrip.isHidden = true
+            freeToolbar.isHidden = false
             inspector.isHidden = true
-            emptyStateLabel.isHidden = false
-            emptyStateLabel.stringValue = "Select or add a button to edit it."
+            rebuildButtonStrip()   // clears button cards
+            if let el = selectedElement {
+                freeInspector.isHidden = false
+                emptyStateLabel.isHidden = true
+                freeInspector.element = el
+            } else {
+                freeInspector.isHidden = true
+                emptyStateLabel.isHidden = false
+                emptyStateLabel.stringValue =
+                    "Add a widget or button, then click it on the preview to edit."
+            }
         }
 
         refreshPreview()
+    }
+
+    private var selectedElement: PageElement? {
+        guard let page = selectedPage, let eid = selectedElementId else { return nil }
+        return page.elements.first { $0.id == eid }
     }
 
     private func rebuildButtonStrip() {
@@ -442,7 +582,16 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
 
     private func startPreviewLoop() {
         previewTimer?.invalidate()
-        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.refreshPreview() }
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            // The free-layout canvas paints from its own `draw(_:)` and just
+            // needs a redraw poke to advance the clock + animated icons.
+            if self.selectedPage?.kind == .freeLayout {
+                self.freeCanvas.tick()
+            } else {
+                self.refreshPreview()
+            }
+        }
         RunLoop.main.add(t, forMode: .common)
         previewTimer = t
         refreshPreview()
@@ -462,15 +611,31 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
             bg = nil
         }
 
+        let inputs = RenderInputs(date: Date(),
+                                  cpuLoad: cpu.usage > 0 ? cpu.usage : 0.42,
+                                  memUsage: memory.usage > 0 ? memory.usage : 0.58,
+                                  memUsedGB: memory.usedGB,
+                                  memTotalGB: memory.totalGB)
+        let animTime = Date().timeIntervalSinceReferenceDate
+
+        // Free-layout pages render through the interactive canvas, which
+        // re-renders itself on `needsDisplay`. Just hand it the latest theme +
+        // background and ask it to redraw.
+        if page.kind == .freeLayout {
+            freeCanvas.update(page: page,
+                              selectedElementId: selectedElementId,
+                              palette: palette,
+                              timeFormat: settings.timeFormat,
+                              showSeconds: settings.showSeconds,
+                              background: bg,
+                              backgroundDim: settings.backgroundDim)
+            return
+        }
+
         do {
             let frame: [UInt8]
             switch page.kind {
             case .status:
-                let inputs = RenderInputs(date: Date(),
-                                          cpuLoad: cpu.usage > 0 ? cpu.usage : 0.42,
-                                          memUsage: memory.usage > 0 ? memory.usage : 0.58,
-                                          memUsedGB: memory.usedGB,
-                                          memTotalGB: memory.totalGB)
                 let statusFrame = try LayoutRenderer.render(
                     layout: settings.layout,
                     inputs: inputs,
@@ -494,8 +659,11 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
                     backgroundDim: settings.backgroundDim,
                     pressedIndex: nil,
                     pageIndex: store.pages.firstIndex(where: { $0.id == page.id }) ?? 0,
-                    pageCount: store.pages.count
+                    pageCount: store.pages.count,
+                    animationTime: animTime
                 )
+            case .freeLayout:
+                return   // handled above
             }
             if let cg = NexusImage.cgImage(from: frame) {
                 previewImageView.image = NSImage(cgImage: cg,
@@ -587,16 +755,82 @@ final class PagesEditorWindowController: NSWindowController, NSWindowDelegate {
         if kind == .buttonGrid, page.buttons.isEmpty {
             page.buttons = [PageButton()]
         }
+        if kind == .freeLayout, page.elements.isEmpty {
+            // Seed a sensible starter: a clock widget on the left, no buttons.
+            page.elements = [
+                PageElement(frame: WidgetKind.clock.defaultRect, kind: .widget(.clock)),
+            ]
+        }
         store.updatePage(page)
         selectedButtonId = page.buttons.first?.id
+        selectedElementId = page.elements.first?.id
         applyState()
     }
 
     @objc private func sidebarSelectionChanged() {
         let row = sidebarTable.selectedRow
         guard row >= 0, row < store.pages.count else { return }
-        selectedPageId = store.pages[row].id
-        selectedButtonId = store.pages[row].buttons.first?.id
+        let p = store.pages[row]
+        selectedPageId = p.id
+        selectedButtonId = p.buttons.first?.id
+        selectedElementId = p.elements.first?.id
+    }
+
+    // MARK: Free-layout actions
+
+    @objc private func addWidgetMenu(_ sender: NSMenuItem) {
+        guard var page = selectedPage, page.kind == .freeLayout,
+              let kind = sender.representedObject as? WidgetKind else { return }
+        let element = PageElement(frame: kind.defaultRect, kind: .widget(kind))
+        page.elements.append(element)
+        store.updatePage(page)
+        selectedElementId = element.id
+        // Reset the popup to its "Add Widget…" title so the menu re-fires.
+        freeAddWidgetPopup.selectItem(at: 0)
+    }
+
+    @objc private func addFreeButton() {
+        guard var page = selectedPage, page.kind == .freeLayout else { return }
+        // Place new buttons in a row across the right side, picking the first
+        // free 48-px slot.
+        let buttonRect = PageRect(x: CGFloat(420 + (page.elements.count % 4) * 50),
+                                  y: 4, width: 44, height: 40)
+        let newBtn = PageButton(label: "Btn",
+                                icon: .sfSymbol(name: "star.fill"),
+                                action: .none)
+        let element = PageElement(frame: buttonRect, kind: .button(newBtn))
+        page.elements.append(element)
+        store.updatePage(page)
+        selectedElementId = element.id
+    }
+
+    private func applyFreeCanvasPageEdit(_ updated: Page) {
+        // Canvas drag commits → write the new frame for the element it moved.
+        store.updatePage(updated)
+        // Don't call applyState — the canvas already drew the change; rebuilding
+        // would steal focus from the user's drag.
+        refreshPreview()
+        if let el = updated.elements.first(where: { $0.id == selectedElementId }) {
+            freeInspector.element = el
+        }
+    }
+
+    private func applyFreeElementEdit(_ element: PageElement) {
+        guard var page = selectedPage,
+              let idx = page.elements.firstIndex(where: { $0.id == element.id }) else { return }
+        page.elements[idx] = element
+        store.updatePage(page)
+        refreshPreview()
+    }
+
+    private func deleteSelectedElement() {
+        guard var page = selectedPage, page.kind == .freeLayout,
+              let id = selectedElementId,
+              let idx = page.elements.firstIndex(where: { $0.id == id }) else { return }
+        page.elements.remove(at: idx)
+        store.updatePage(page)
+        selectedElementId = page.elements.first?.id
+        applyState()
     }
 
     // MARK: Button actions
@@ -670,8 +904,13 @@ extension PagesEditorWindowController: NSTableViewDataSource, NSTableViewDelegat
         let cell = NSTableCellView()
 
         let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: page.kind == .status ? "clock" : "square.grid.2x2",
-                             accessibilityDescription: nil)
+        let symbol: String
+        switch page.kind {
+        case .status:     symbol = "clock"
+        case .buttonGrid: symbol = "square.grid.2x2"
+        case .freeLayout: symbol = "rectangle.3.group"
+        }
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
 
@@ -680,9 +919,17 @@ extension PagesEditorWindowController: NSTableViewDataSource, NSTableViewDelegat
         title.lineBreakMode = .byTruncatingTail
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let subtitle = NSTextField(labelWithString: page.kind == .status
-                                   ? "Clock & stats"
-                                   : "\(page.buttons.count) button\(page.buttons.count == 1 ? "" : "s")")
+        let subtitleText: String
+        switch page.kind {
+        case .status:
+            subtitleText = "Clock & stats"
+        case .buttonGrid:
+            subtitleText = "\(page.buttons.count) button\(page.buttons.count == 1 ? "" : "s")"
+        case .freeLayout:
+            let n = page.elements.count
+            subtitleText = "\(n) element\(n == 1 ? "" : "s")"
+        }
+        let subtitle = NSTextField(labelWithString: subtitleText)
         subtitle.font = NSFont.systemFont(ofSize: 10)
         subtitle.textColor = .secondaryLabelColor
         subtitle.translatesAutoresizingMaskIntoConstraints = false
